@@ -4,9 +4,7 @@
 (оригинал — Python + Flet). Интерфейс и вся логика конвертации воспроизведены
 на raylib + raygui; сторонних GUI-библиотек (GTK/Qt/Flet) не требуется.
 
-Поддерживаются **Linux** и **Windows** (MinGW-w64). Под Windows есть готовый
-`dist/windows/displacebox.exe`, собранный кросс-компилятором; рядом лежит папка
-`assets`, без неё приложение не запустится.
+Поддерживаются **Linux** и **Windows** (MinGW-w64).
 
 ![Главное окно](docs/screenshots/main_dark.png)
 
