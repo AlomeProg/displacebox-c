@@ -1,0 +1,11 @@
+# build artifacts
+/displacebox
+/src/*.o
+/src/*.d
+/tests/convert_cli
+
+# runtime files
+/dgc_*.log
+/displacebox_screenshot.png
+/.test-tmp/
+/tests/*.d
