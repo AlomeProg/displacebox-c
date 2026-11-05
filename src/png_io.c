@@ -1,14 +1,41 @@
 #include "png_io.h"
+#include "platform.h"
+#include "zlib_codec.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 #define PNG_MAX_DIMENSION 32768
 
 static const unsigned char pngSignature[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+
+/* Small CRC-32 implementation (same polynomial as zlib/PNG). */
+static uint32_t g_crcTable[256];
+static bool g_crcTableReady = false;
+
+static void crc32_init(void)
+{
+    if (g_crcTableReady) return;
+    for (uint32_t i = 0; i < 256; i++)
+    {
+        uint32_t c = i;
+        for (int k = 0; k < 8; k++)
+            c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+        g_crcTable[i] = c;
+    }
+    g_crcTableReady = true;
+}
+
+static uint32_t crc32_update(uint32_t crc, const unsigned char *data, size_t length)
+{
+    crc32_init();
+    crc = ~crc;
+    for (size_t i = 0; i < length; i++)
+        crc = g_crcTable[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    return ~crc;
+}
 
 static uint32_t read_be32(const unsigned char *p)
 {
@@ -25,7 +52,7 @@ static void write_be32(unsigned char *p, uint32_t value)
 
 static unsigned char *read_file(const char *path, size_t *outSize)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) return NULL;
 
     if (fseek(f, 0, SEEK_END) != 0)
@@ -209,10 +236,9 @@ PngStatus png_read_gray16(const char *path, uint16_t **outPixels, int *outW, int
         return PNGIO_ERR_MEMORY;
     }
 
-    uLongf destLen = (uLongf)expected;
-    int zr = uncompress(raw, &destLen, idat, (uLong)idatSize);
+    long inflated = zlib_decompress(idat, idatSize, raw, expected);
     free(idat);
-    if (zr != Z_OK || destLen != (uLongf)expected)
+    if (inflated != (long)expected)
     {
         free(raw);
         free(pixels);
@@ -288,12 +314,11 @@ static bool write_chunk(FILE *f, const char *type, const unsigned char *data, ui
 
     if (length > 0 && fwrite(data, 1, length, f) != length) return false;
 
-    uLong crc = crc32(0L, Z_NULL, 0);
-    crc = crc32(crc, (const Bytef *)type, 4);
-    if (length > 0) crc = crc32(crc, (const Bytef *)data, length);
+    uint32_t crc = crc32_update(0, (const unsigned char *)type, 4);
+    if (length > 0) crc = crc32_update(crc, data, length);
 
     unsigned char crcbuf[4];
-    write_be32(crcbuf, (uint32_t)crc);
+    write_be32(crcbuf, crc);
     return fwrite(crcbuf, 1, 4, f) == 4;
 }
 
@@ -320,7 +345,7 @@ PngStatus png_write_gray16(const char *path, const uint16_t *pixels, int width, 
         }
     }
 
-    uLongf compressedCap = compressBound((uLong)rawSize);
+    size_t compressedCap = zlib_bound(rawSize);
     unsigned char *compressed = (unsigned char *)malloc(compressedCap);
     if (!compressed)
     {
@@ -328,16 +353,15 @@ PngStatus png_write_gray16(const char *path, const uint16_t *pixels, int width, 
         return PNGIO_ERR_MEMORY;
     }
 
-    uLongf compressedSize = compressedCap;
-    int zr = compress2(compressed, &compressedSize, raw, (uLong)rawSize, 6);
+    long compressedSize = zlib_compress(raw, rawSize, compressed, compressedCap);
     free(raw);
-    if (zr != Z_OK)
+    if (compressedSize <= 0)
     {
         free(compressed);
         return PNGIO_ERR_IO;
     }
 
-    FILE *f = fopen(path, "wb");
+    FILE *f = plat_fopen(path, "wb");
     if (!f)
     {
         free(compressed);

@@ -4,9 +4,9 @@ RAYLIB_DIR ?= ../raylib-6.2_linux_amd64
 CFLAGS  ?= -O2
 CFLAGS  += -std=c11 -Wall -Wextra -Wno-unused-parameter -MMD -MP \
            -Isrc -I$(RAYLIB_DIR)/include
-LDLIBS  = $(RAYLIB_DIR)/lib/libraylib.a -lGL -lX11 -lm -lpthread -ldl -lrt -lz
+LDLIBS  = $(RAYLIB_DIR)/lib/libraylib.a -lGL -lX11 -lm -lpthread -ldl -lrt
 
-SRC     := $(wildcard src/*.c)
+SRC     := $(filter-out src/platform_win32.c src/entry_win32.c,$(wildcard src/*.c))
 OBJ     := $(SRC:.c=.o)
 DEP     := $(OBJ:.o=.d)
 TARGET  := displacebox
@@ -24,8 +24,8 @@ $(TARGET): $(OBJ)
 run: $(TARGET)
 	./$(TARGET)
 
-tests/convert_cli: tests/convert_cli.c src/converter.c src/png_io.c src/platform.c
-	$(CC) $(CFLAGS) $^ -o $@ -lX11 -lz -lpthread -lm
+tests/convert_cli: tests/convert_cli.c src/converter.c src/png_io.c src/zlib_codec.c src/platform_common.c src/platform_posix.c
+	$(CC) $(CFLAGS) $^ -o $@ -lX11 -lm
 
 test: tests/convert_cli
 	python3 tests/compare_with_python.py

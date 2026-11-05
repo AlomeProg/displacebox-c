@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 /* ------------------------------------------------------------------------- */
 /* Small helpers                                                             */
@@ -28,7 +27,7 @@ static void set_error(char *buf, size_t size, const char *fmt, ...)
 
 static unsigned char *read_entire_file(const char *path, size_t *outSize)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = plat_fopen(path, "rb");
     if (!f) return NULL;
 
     if (fseek(f, 0, SEEK_END) != 0)
@@ -388,7 +387,7 @@ bool metadata_has_required(const Metadata *meta)
 
 static ConvStatus write_raw_u16(const char *path, const uint16_t *values, size_t count)
 {
-    FILE *f = fopen(path, "wb");
+    FILE *f = plat_fopen(path, "wb");
     if (!f) return CONV_ERR_OPEN_OUTPUT;
 
     unsigned char buffer[8192];
@@ -522,7 +521,7 @@ ConvStatus convert_forward(const char *inputPath, const char *outputPath, int si
 
     if (saveMetadata && metadataPathOut && metadataPathSize)
     {
-        char dir[PATH_MAX];
+        char dir[DB_PATH_MAX];
         char mapName[256];
         char fileName[512];
         plat_path_dirname(outputPath, dir, sizeof(dir));
@@ -540,7 +539,7 @@ ConvStatus convert_forward(const char *inputPath, const char *outputPath, int si
             format_double(maximum, fmax, sizeof(fmax));
             format_double(delta, fdelta, sizeof(fdelta));
 
-            FILE *meta = fopen(metadataPathOut, "wb");
+            FILE *meta = plat_fopen(metadataPathOut, "wb");
             if (!meta)
             {
                 set_error(errorOut, errorOutSize, "Unable to write metadata: %s", metadataPathOut);
@@ -576,7 +575,7 @@ static ConvStatus read_pixels(const char *inputPath, uint16_t **pixels, int *wid
                               size_t *count, char *errorOut, size_t errorOutSize)
 {
     const char *ext = plat_path_ext(inputPath);
-    if (strcasecmp(ext, ".raw") == 0)
+    if (plat_strcasecmp(ext, ".raw") == 0)
     {
         size_t size = 0;
         unsigned char *data = read_entire_file(inputPath, &size);
@@ -616,7 +615,7 @@ static ConvStatus read_pixels(const char *inputPath, uint16_t **pixels, int *wid
         return CONV_OK;
     }
 
-    if (strcasecmp(ext, ".png") == 0)
+    if (plat_strcasecmp(ext, ".png") == 0)
     {
         PngStatus png = png_read_gray16(inputPath, pixels, width, height);
         switch (png)
@@ -699,7 +698,7 @@ ConvStatus convert_reverse(const char *inputPath, const char *outputPath,
     }
     free(pixels);
 
-    FILE *f = fopen(outputPath, "wb");
+    FILE *f = plat_fopen(outputPath, "wb");
     if (!f)
     {
         free(output);

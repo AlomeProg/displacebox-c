@@ -3,13 +3,10 @@
 #include "i18n.h"
 #include "platform.h"
 
-#include <dirent.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/stat.h>
 #include <time.h>
 
 #define FD_PANEL_W 540.0f
@@ -17,7 +14,7 @@
 #define FD_ROW_H   26.0f
 #define FD_LIST_PAD 4.0f
 
-static char g_lastDir[3][PATH_MAX];
+static char g_lastDir[3][DB_PATH_MAX];
 
 static bool has_extension(const char *name, FdFilter filter)
 {
@@ -25,11 +22,11 @@ static bool has_extension(const char *name, FdFilter filter)
     switch (filter)
     {
         case FD_FILTER_BIN:
-            return strcasecmp(ext, ".bin") == 0;
+            return plat_strcasecmp(ext, ".bin") == 0;
         case FD_FILTER_RAW_PNG:
-            return strcasecmp(ext, ".raw") == 0 || strcasecmp(ext, ".png") == 0;
+            return plat_strcasecmp(ext, ".raw") == 0 || plat_strcasecmp(ext, ".png") == 0;
         case FD_FILTER_JSON:
-            return strcasecmp(ext, ".json") == 0;
+            return plat_strcasecmp(ext, ".json") == 0;
     }
     return false;
 }
@@ -39,7 +36,7 @@ static int compare_entries(const void *a, const void *b)
     const FdEntry *ea = (const FdEntry *)a;
     const FdEntry *eb = (const FdEntry *)b;
     if (ea->isDir != eb->isDir) return ea->isDir ? -1 : 1;
-    return strcasecmp(ea->name, eb->name);
+    return plat_strcasecmp(ea->name, eb->name);
 }
 
 static void fd_reload(FileDialog *fd)
@@ -50,30 +47,20 @@ static void fd_reload(FileDialog *fd)
     fd->scroll = 0;
     fd->reload = false;
 
-    DIR *dir = opendir(fd->dir);
-    if (!dir)
+    PlatDir *dir = NULL;
+    if (!plat_dir_open(&dir, fd->dir))
     {
         log_warning("File picker: unable to open directory: %s", fd->dir);
         return;
     }
 
     int capacity = 0;
-    struct dirent *item;
-    while ((item = readdir(dir)) != NULL)
+    PlatDirEntry item;
+    while (plat_dir_next(dir, &item))
     {
-        const char *name = item->d_name;
-        if (strcmp(name, ".") == 0) continue;
-        if (strcmp(name, "..") == 0) continue;
+        const char *name = item.name;
         if (name[0] == '.') continue;
-
-        char full[PATH_MAX];
-        if (!plat_path_join(full, sizeof(full), fd->dir, name)) continue;
-
-        struct stat st;
-        if (stat(full, &st) != 0) continue;
-
-        bool isDir = S_ISDIR(st.st_mode);
-        if (!isDir && !has_extension(name, fd->filter)) continue;
+        if (!item.isDir && !has_extension(name, fd->filter)) continue;
 
         if (fd->entryCount == capacity)
         {
@@ -86,10 +73,10 @@ static void fd_reload(FileDialog *fd)
 
         FdEntry *entry = &fd->entries[fd->entryCount++];
         snprintf(entry->name, sizeof(entry->name), "%s", name);
-        entry->isDir = isDir;
-        entry->size = (long long)st.st_size;
+        entry->isDir = item.isDir;
+        entry->size = item.size;
     }
-    closedir(dir);
+    plat_dir_close(dir);
 
     if (fd->entryCount > 1)
         qsort(fd->entries, (size_t)fd->entryCount, sizeof(FdEntry), compare_entries);
@@ -97,7 +84,7 @@ static void fd_reload(FileDialog *fd)
 
 static void fd_navigate(FileDialog *fd, const char *path)
 {
-    char absolute[PATH_MAX];
+    char absolute[DB_PATH_MAX];
     if (!plat_path_absolute(path, absolute, sizeof(absolute))) return;
     if (!plat_is_dir(absolute)) return;
 
@@ -122,7 +109,7 @@ static bool fd_accept(FileDialog *fd, const char *path)
 
 static void fd_apply_path_input(FileDialog *fd)
 {
-    char absolute[PATH_MAX];
+    char absolute[DB_PATH_MAX];
     if (!plat_path_absolute(fd->pathInput, absolute, sizeof(absolute))) return;
 
     if (plat_is_dir(absolute))
@@ -137,7 +124,7 @@ static void fd_apply_path_input(FileDialog *fd)
             fd_accept(fd, absolute);
             return;
         }
-        char parent[PATH_MAX];
+        char parent[DB_PATH_MAX];
         plat_path_dirname(absolute, parent, sizeof(parent));
         fd_navigate(fd, parent);
         snprintf(fd->pathInput, sizeof(fd->pathInput), "%s", absolute);
@@ -154,13 +141,13 @@ void fd_open(FileDialog *fd, FdFilter filter, const char *startPath, LangId lang
     fd->active = -1;
     fd->pathEditMode = false;
 
-    char start[PATH_MAX] = { 0 };
+    char start[DB_PATH_MAX] = { 0 };
     if (startPath && startPath[0])
     {
         if (plat_is_dir(startPath)) snprintf(start, sizeof(start), "%s", startPath);
         else
         {
-            char absolute[PATH_MAX];
+            char absolute[DB_PATH_MAX];
             if (plat_path_absolute(startPath, absolute, sizeof(absolute)))
                 plat_path_dirname(absolute, start, sizeof(start));
         }
@@ -174,7 +161,7 @@ void fd_open(FileDialog *fd, FdFilter filter, const char *startPath, LangId lang
         if (!plat_getcwd(start, sizeof(start))) snprintf(start, sizeof(start), "/");
     }
 
-    char absolute[PATH_MAX];
+    char absolute[DB_PATH_MAX];
     if (plat_path_absolute(start, absolute, sizeof(absolute)))
         snprintf(fd->dir, sizeof(fd->dir), "%s", absolute);
     else
@@ -221,7 +208,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     {
         fd->cancelled = true;
         fd->open = false;
-        snprintf(g_lastDir[fd->filter], PATH_MAX, "%s", fd->dir);
+        snprintf(g_lastDir[fd->filter], DB_PATH_MAX, "%s", fd->dir);
         return;
     }
 
@@ -232,14 +219,14 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
 
     if (ui_icon_button(ui, upBtn, UI_ICON_UP, theme->accent))
     {
-        char parent[PATH_MAX];
+        char parent[DB_PATH_MAX];
         plat_path_dirname(fd->dir, parent, sizeof(parent));
         fd_navigate(fd, parent);
     }
     if (ui_icon_button(ui, homeBtn, UI_ICON_HOME, theme->accent))
     {
-        const char *home = getenv("HOME");
-        fd_navigate(fd, home ? home : "/");
+        char home[DB_PATH_MAX];
+        if (plat_home_dir(home, sizeof(home))) fd_navigate(fd, home);
     }
 
     Rectangle pathBox = { panel.x + 96.0f, rowY, panel.width - 112.0f, 32.0f };
@@ -287,7 +274,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
                 fd->lastClickTime = now;
                 fd->active = index;
 
-                char full[PATH_MAX];
+                char full[DB_PATH_MAX];
                 plat_path_join(full, sizeof(full), fd->dir, fd->entries[index].name);
                 snprintf(fd->pathInput, sizeof(fd->pathInput), "%s", full);
                 snprintf(fd->selected, sizeof(fd->selected), "%s", full);
@@ -360,7 +347,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     {
         fd->cancelled = true;
         fd->open = false;
-        snprintf(g_lastDir[fd->filter], PATH_MAX, "%s", fd->dir);
+        snprintf(g_lastDir[fd->filter], DB_PATH_MAX, "%s", fd->dir);
         return;
     }
 
@@ -368,7 +355,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     {
         if (fd->active >= 0 && fd->active < fd->entryCount)
         {
-            char full[PATH_MAX];
+            char full[DB_PATH_MAX];
             plat_path_join(full, sizeof(full), fd->dir, fd->entries[fd->active].name);
             if (fd->entries[fd->active].isDir) fd_navigate(fd, full);
             else fd_accept(fd, full);
@@ -384,7 +371,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     {
         fd->cancelled = true;
         fd->open = false;
-        snprintf(g_lastDir[fd->filter], PATH_MAX, "%s", fd->dir);
+        snprintf(g_lastDir[fd->filter], DB_PATH_MAX, "%s", fd->dir);
         return;
     }
 
@@ -402,12 +389,12 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     }
     if (IsKeyPressed(KEY_ENTER) && !fd->pathEditMode && fd->active >= 0 && fd->active < fd->entryCount)
     {
-        char full[PATH_MAX];
+        char full[DB_PATH_MAX];
         plat_path_join(full, sizeof(full), fd->dir, fd->entries[fd->active].name);
         if (fd->entries[fd->active].isDir) fd_navigate(fd, full);
         else fd_accept(fd, full);
     }
 
     if (fd->open)
-        snprintf(g_lastDir[fd->filter], PATH_MAX, "%s", fd->dir);
+        snprintf(g_lastDir[fd->filter], DB_PATH_MAX, "%s", fd->dir);
 }

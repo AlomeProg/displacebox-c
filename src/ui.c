@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "platform.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,16 +115,65 @@ static int *build_codepoints(int *outCount)
     return codepoints;
 }
 
+static unsigned char *read_asset_file(const char *fileName, int *outSize,
+                                      char *path, size_t pathSize)
+{
+    *outSize = 0;
+    if (!plat_asset_path(fileName, path, pathSize))
+    {
+        log_error("Asset not found: %s", fileName);
+        return NULL;
+    }
+
+    long long length = plat_file_size(path);
+    if (length <= 0 || length > INT_MAX)
+    {
+        log_error("Invalid asset size: %s", path);
+        return NULL;
+    }
+
+    FILE *file = plat_fopen(path, "rb");
+    if (!file)
+    {
+        log_error("Unable to open asset: %s", path);
+        return NULL;
+    }
+
+    unsigned char *data = (unsigned char *)malloc((size_t)length);
+    if (!data)
+    {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t read = fread(data, 1, (size_t)length, file);
+    fclose(file);
+    if (read != (size_t)length)
+    {
+        free(data);
+        return NULL;
+    }
+
+    *outSize = (int)length;
+    return data;
+}
+
 static Font load_font_file(const char *fileName, int *codepoints, int count)
 {
-    char path[PATH_MAX];
-    if (!plat_asset_path(fileName, path, sizeof(path)))
+    char path[DB_PATH_MAX];
+    int dataSize = 0;
+    unsigned char *data = read_asset_file(fileName, &dataSize, path, sizeof(path));
+    if (!data)
     {
         log_error("Font not found: %s (falling back to raylib default font)", fileName);
         return GetFontDefault();
     }
 
-    Font font = LoadFontEx(path, 48, codepoints, count);
+    /* Load from memory: raylib's file loaders use narrow fopen() on Windows,
+     * which cannot open assets under a Unicode path (e.g. C:\Users\Иван). */
+    Font font = LoadFontFromMemory(".ttf", data, dataSize, 48, codepoints, count);
+    free(data);
+
     if (font.texture.id == 0)
     {
         log_error("Unable to load font: %s", path);
@@ -135,17 +185,28 @@ static Font load_font_file(const char *fileName, int *codepoints, int count)
 
 static Texture2D load_texture_asset(const char *fileName)
 {
-    char path[PATH_MAX];
-    if (!plat_asset_path(fileName, path, sizeof(path)))
+    Texture2D empty = { 0 };
+    char path[DB_PATH_MAX];
+    int dataSize = 0;
+    unsigned char *data = read_asset_file(fileName, &dataSize, path, sizeof(path));
+    if (!data) return empty;
+
+    Image image = LoadImageFromMemory(".png", data, dataSize);
+    free(data);
+    if (!image.data)
     {
-        log_error("Texture not found: %s", fileName);
-        Texture2D empty = { 0 };
+        log_error("Unable to decode image: %s", path);
         return empty;
     }
 
-    Texture2D texture = LoadTexture(path);
-    if (texture.id != 0) SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
-    else log_error("Unable to load texture: %s", path);
+    Texture2D texture = LoadTextureFromImage(image);
+    UnloadImage(image);
+    if (texture.id == 0)
+    {
+        log_error("Unable to upload texture: %s", path);
+        return empty;
+    }
+    SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
     return texture;
 }
 

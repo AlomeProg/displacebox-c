@@ -13,7 +13,7 @@ typedef enum {
 } FdFilter;
 
 typedef struct {
-    char name[256];
+    char name[1024];
     bool isDir;
     long long size;
 } FdEntry;
@@ -21,10 +21,10 @@ typedef struct {
 typedef struct {
     bool open;
     FdFilter filter;
-    char dir[PATH_MAX];
-    char pathInput[PATH_MAX];
-    char selected[PATH_MAX];
-    char result[PATH_MAX];
+    char dir[DB_PATH_MAX];
+    char pathInput[DB_PATH_MAX];
+    char selected[DB_PATH_MAX];
+    char result[DB_PATH_MAX];
     FdEntry *entries;
     int entryCount;
     int scroll;

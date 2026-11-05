@@ -9,3 +9,5 @@
 /displacebox_screenshot.png
 /.test-tmp/
 /tests/*.d
+/build-win/
+/dist/

@@ -19,7 +19,7 @@
 /* Logical layout is designed in a 580x680 space. The window and everything
  * drawn inside it are scaled up by UI_SCALE (textures/fonts are scaled by a
  * 2D camera, so the result stays crisp). */
-#define UI_SCALE     1.40f
+#define UI_SCALE     1.20f
 #define WINDOW_W     580
 #define WINDOW_H     680
 #define WINDOW_PIXEL_W ((int)(WINDOW_W * UI_SCALE))
@@ -32,8 +32,8 @@
 #define TELEGRAM_URL "https://t.me/stakanyasher"
 #define YOUTUBE_URL  "https://www.youtube.com/@stakanyash"
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
+#ifndef DB_PATH_MAX
+#define DB_PATH_MAX 4096
 #endif
 
 typedef enum {

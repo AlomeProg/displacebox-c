@@ -1,0 +1,62 @@
+# DisplaceBox - native Windows (MinGW / MSYS2) build
+#
+# Native Windows:
+#   mingw32-make -f Makefile.win
+# Cross-compile from Linux:
+#   make -f Makefile.win CC=x86_64-w64-mingw32-gcc \
+#        WINDRES=x86_64-w64-mingw32-windres \
+#        RAYLIB_LIB=build-win/raylib-src/src/libraylib.a
+
+CC       ?= gcc
+WINDRES  ?= windres
+RAYLIB_DIR ?= ../raylib-6.2
+RAYLIB_LIB ?= $(RAYLIB_DIR)/src/libraylib.a
+BUILD_DIR  ?= build-win
+TARGET     ?= displacebox.exe
+
+CFLAGS  = -O2 -std=c11 -Wall -Wextra -Wno-unused-parameter \
+          -D_WIN32_WINNT=0x0601 -DUNICODE -D_UNICODE \
+          -Isrc -I$(RAYLIB_DIR)/src
+LDFLAGS = -mwindows -static -static-libgcc
+SSP_LIB := $(shell $(CC) -print-file-name=libssp.a)
+LDLIBS  = $(RAYLIB_LIB) -lopengl32 -lgdi32 -lwinmm -lshell32 -lole32 -luuid \
+          -Wl,--start-group $(SSP_LIB) -lmingwex -Wl,--end-group
+
+SRC := $(filter-out src/platform_posix.c src/entry_win32.c,$(wildcard src/*.c)) src/entry_win32.c
+OBJ := $(patsubst src/%.c,$(BUILD_DIR)/obj/%.o,$(SRC))
+RES := $(BUILD_DIR)/app.res
+
+.PHONY: all clean run dist raylib
+
+all: $(TARGET)
+
+$(TARGET): $(OBJ) $(RES) $(RAYLIB_LIB)
+	@mkdir -p $(dir $(TARGET))
+	$(CC) $(OBJ) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(BUILD_DIR)/obj/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(RES): resources/app.rc resources/app.manifest resources/icon.ico
+	@mkdir -p $(BUILD_DIR)
+	$(WINDRES) -Iresources -O coff $< -o $@
+
+raylib: $(RAYLIB_LIB)
+
+$(RAYLIB_LIB):
+	$(MAKE) -C $(RAYLIB_DIR)/src OS=Windows_NT PLATFORM=PLATFORM_DESKTOP \
+	        RAYLIB_LIBTYPE=STATIC
+
+run: $(TARGET)
+	./$(TARGET)
+
+dist: $(TARGET)
+	@mkdir -p dist/windows/assets
+	cp $(TARGET) dist/windows/
+	cp -r assets/. dist/windows/assets/
+
+clean:
+	rm -rf $(BUILD_DIR) $(TARGET)
+
+-include $(OBJ:.o=.d)

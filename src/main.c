@@ -5,17 +5,15 @@
 #include "i18n.h"
 #include "platform.h"
 #include "png_io.h"
-#include "raygui.h"
+#include "external/raygui.h"
 #include "raylib.h"
 #include "ui.h"
-#include "updater.h"
 
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 typedef enum { MODE_FORWARD = 0, MODE_REVERSE } AppMode;
 
@@ -27,8 +25,7 @@ typedef enum {
     DLG_VERSION,
     DLG_SUCCESS,
     DLG_ERROR,
-    DLG_CONFIRM,
-    DLG_UPDATE
+    DLG_CONFIRM
 } DialogKind;
 
 typedef struct {
@@ -38,12 +35,12 @@ typedef struct {
     bool shouldClose;
     bool dark;
 
-    char inputPath[PATH_MAX];
-    char jsonPath[PATH_MAX];
+    char inputPath[DB_PATH_MAX];
+    char jsonPath[DB_PATH_MAX];
     Metadata meta;
     Metadata pendingMeta;
     bool metaLoaded;
-    char pendingJson[PATH_MAX];
+    char pendingJson[DB_PATH_MAX];
 
     int format;     /* -1 = not selected, 0 = RAW, 1 = PNG */
     int sizeIndex;  /* -1 = not selected */
@@ -55,17 +52,11 @@ typedef struct {
     bool dlgHelp;
     float dlgScroll;
 
-    char successOut[PATH_MAX];
-    char successMeta[PATH_MAX];
+    char successOut[DB_PATH_MAX];
+    char successMeta[DB_PATH_MAX];
 
     FileDialog fd;
     FdFilter fdFilter;
-
-    Updater updater;
-    bool updateStarted;
-    bool updatePending;
-    char updateVersion[64];
-    char updateBody[8192];
 
     int hoverId;
     float hoverTimer;
@@ -79,7 +70,7 @@ typedef struct {
     Vector2 dragStartWindow;
     Vector2 dragStartGlobal;
 
-    char screenshotPath[PATH_MAX];
+    char screenshotPath[DB_PATH_MAX];
     int screenshotAtFrame;
     int frame;
 } App;
@@ -105,7 +96,7 @@ static void str_append(char *buffer, size_t size, const char *text)
 
 static void make_output_path(const char *input, const char *extension, char *out, size_t outSize)
 {
-    char dir[PATH_MAX];
+    char dir[DB_PATH_MAX];
     char stem[512];
     char name[600];
     plat_path_dirname(input, dir, sizeof(dir));
@@ -237,11 +228,11 @@ static void forward_convert(App *app)
 
     int size = 64 << app->sizeIndex; /* 64, 128, 256, 512, 1024 */
     bool toPng = (app->format == 1);
-    char outputPath[PATH_MAX];
+    char outputPath[DB_PATH_MAX];
     make_output_path(app->inputPath, toPng ? ".png" : ".raw", outputPath, sizeof(outputPath));
 
     ConvStats stats;
-    char metaPath[PATH_MAX] = { 0 };
+    char metaPath[DB_PATH_MAX] = { 0 };
     char errorText[512] = { 0 };
 
     ConvStatus status = convert_forward(app->inputPath, outputPath, size, toPng, true, &stats,
@@ -281,13 +272,13 @@ static void reverse_convert(App *app)
     }
 
     const char *ext = plat_path_ext(app->inputPath);
-    if (strcasecmp(ext, ".raw") != 0 && strcasecmp(ext, ".png") != 0)
+    if (plat_strcasecmp(ext, ".raw") != 0 && plat_strcasecmp(ext, ".png") != 0)
     {
         show_error(app, tr(STR_WRONG_EXT_REVERSE), false);
         return;
     }
 
-    char outputPath[PATH_MAX];
+    char outputPath[DB_PATH_MAX];
     make_output_path(app->inputPath, ".bin", outputPath, sizeof(outputPath));
 
     ConvStats stats;
@@ -353,7 +344,7 @@ static void accept_input_path(App *app, const char *path)
 {
     if (app->mode == MODE_FORWARD)
     {
-        if (strcasecmp(plat_path_ext(path), ".bin") != 0)
+        if (plat_strcasecmp(plat_path_ext(path), ".bin") != 0)
         {
             show_error(app, tr(STR_WRONG_EXTENSION), false);
             log_error("Selected file is not .bin file!");
@@ -365,7 +356,7 @@ static void accept_input_path(App *app, const char *path)
     }
 
     const char *ext = plat_path_ext(path);
-    if (strcasecmp(ext, ".png") == 0)
+    if (plat_strcasecmp(ext, ".png") == 0)
     {
         uint16_t *pixels = NULL;
         int width = 0, height = 0;
@@ -384,7 +375,7 @@ static void accept_input_path(App *app, const char *path)
         }
         free(pixels);
     }
-    else if (strcasecmp(ext, ".raw") == 0)
+    else if (plat_strcasecmp(ext, ".raw") == 0)
     {
         long long size = plat_file_size(path);
         if (size > 0 && (size % 2) != 0)
@@ -409,7 +400,7 @@ static void handle_file_picker_result(App *app)
 {
     if (app->fd.accepted)
     {
-        char path[PATH_MAX];
+        char path[DB_PATH_MAX];
         snprintf(path, sizeof(path), "%s", app->fd.result);
         app->fd.accepted = false;
 
@@ -1099,48 +1090,6 @@ static void draw_language_dialog(App *app)
         app->dialog = DLG_NONE;
 }
 
-static void draw_update_dialog(App *app)
-{
-    Theme *theme = &app->ui.theme;
-    float width = 500.0f, height = 470.0f;
-    Rectangle panel = begin_dialog(app, width, height, theme->panel, theme->panelBorder);
-    draw_dialog_header(app, panel, UI_ICON_OPEN, theme->text, theme->text, theme->panel);
-
-    char text[16384];
-    snprintf(text, sizeof(text), "%s %s\n\n%s", tr(STR_VERSION_FOR_DOWNLOAD), app->updateVersion,
-             app->updateBody);
-
-    int lineCount = ui_wrap(&app->ui, text, 12.5f, width - 40.0f, g_dialogLines, UI_MAX_LINES);
-    float contentHeight = ui_lines_height(lineCount, 12.5f);
-    Rectangle content = { panel.x + 20.0f, panel.y + 64.0f, panel.width - 40.0f,
-                          panel.height - 128.0f };
-
-    if (CheckCollisionPointRec(GetMousePosition(), content))
-    {
-        float wheel = GetMouseWheelMove();
-        if (wheel != 0.0f) app->dlgScroll -= wheel * 40.0f;
-    }
-    clamp_dialog_scroll(app, content, contentHeight);
-    ui_draw_lines(&app->ui, g_dialogLines, lineCount, content, 12.5f, theme->text, app->dlgScroll);
-    draw_dialog_scrollbar(content, contentHeight, app->dlgScroll);
-
-    float buttonY = panel.y + panel.height - 50.0f;
-    float right = panel.x + panel.width - 20.0f;
-    const char *cancelLabel = tr(STR_CANCEL);
-    float cancelWidth = dialog_button_width(app, cancelLabel);
-    Rectangle cancelRect = { right - cancelWidth, buttonY, cancelWidth, 34.0f };
-    const char *openLabel = tr(STR_OPEN_GITHUB);
-    float openWidth = dialog_button_width(app, openLabel);
-    Rectangle openRect = { cancelRect.x - 10.0f - openWidth, buttonY, openWidth, 34.0f };
-
-    if (dialog_button(app, openRect, openLabel, theme->accent))
-    {
-        plat_open_url(RELEASES_URL);
-        app->dialog = DLG_NONE;
-    }
-    if (dialog_button(app, cancelRect, cancelLabel, theme->accent)) app->dialog = DLG_NONE;
-}
-
 static void draw_dialog(App *app)
 {
     switch (app->dialog)
@@ -1157,9 +1106,6 @@ static void draw_dialog(App *app)
         case DLG_VERSION:
             draw_version_dialog(app);
             break;
-        case DLG_UPDATE:
-            draw_update_dialog(app);
-            break;
         case DLG_SUCCESS:
         case DLG_ERROR:
         case DLG_CONFIRM:
@@ -1173,33 +1119,6 @@ static void draw_dialog(App *app)
     {
         if (app->dialog == DLG_CONFIRM) app->pendingJson[0] = '\0';
         app->dialog = DLG_NONE;
-    }
-}
-
-/* ------------------------------------------------------------------------- */
-/* Update check                                                              */
-/* ------------------------------------------------------------------------- */
-
-static void poll_updates(App *app)
-{
-    if (!app->updateStarted) return;
-    if (!app->updatePending)
-    {
-        char version[64] = { 0 };
-        char body[8192] = { 0 };
-        if (updater_poll(&app->updater, version, sizeof(version), body, sizeof(body)))
-        {
-            snprintf(app->updateVersion, sizeof(app->updateVersion), "%s", version);
-            snprintf(app->updateBody, sizeof(app->updateBody), "%s", body);
-            app->updatePending = true;
-            log_info("Update available: %s", version);
-        }
-    }
-
-    if (app->updatePending && app->dialog == DLG_NONE && !app->fd.open)
-    {
-        app->updatePending = false;
-        open_dialog(app, DLG_UPDATE, tr(STR_UPDATE_AVAILABLE), "");
     }
 }
 
@@ -1291,11 +1210,10 @@ static void print_usage(void)
     printf("  -lang <En|Ru|Uk|Be|Pl>   force interface language\n");
     printf("  -reverse, --reverse      start in \".raw/.png --> .bin\" mode\n");
     printf("  --light                  start with the light theme\n");
-    printf("  --no-update              do not check GitHub for updates\n");
     printf("  --screenshot <file>      save a screenshot after a few frames and exit\n");
     printf("  --frames <n>             frames to wait before the screenshot (default 20)\n");
     printf("  --dialog <name>          open a dialog at startup (help, meta, version,\n");
-    printf("                           language, update, success, error, confirm, files)\n");
+    printf("                           language, success, error, confirm, files, dropdown)\n");
 }
 
 static void setup_demo_dialog(App *app, const char *name)
@@ -1309,14 +1227,6 @@ static void setup_demo_dialog(App *app, const char *name)
     else if (strcmp(name, "language") == 0) show_language_dialog(app);
     else if (strcmp(name, "files") == 0) open_file_picker(app, FD_FILTER_BIN, NULL);
     else if (strcmp(name, "dropdown") == 0) app->sizeEdit = true;
-    else if (strcmp(name, "update") == 0)
-    {
-        snprintf(app->updateVersion, sizeof(app->updateVersion), "2.3");
-        snprintf(app->updateBody, sizeof(app->updateBody),
-                 "%s\n\n• Improved performance\n• Fixed theme switching\n• Linux C port",
-                 "What's new:");
-        open_dialog(app, DLG_UPDATE, tr(STR_UPDATE_AVAILABLE), "");
-    }
     else if (strcmp(name, "success") == 0)
     {
         snprintf(app->successOut, sizeof(app->successOut),
@@ -1336,7 +1246,7 @@ static void setup_demo_dialog(App *app, const char *name)
     }
 }
 
-int main(int argc, char **argv)
+int displacebox_main(int argc, char **argv)
 {
     plat_ignore_sigchld();
     plat_log_init();
@@ -1363,7 +1273,7 @@ int main(int argc, char **argv)
         bool found = false;
         for (int i = 0; i < LANG_COUNT; i++)
         {
-            if (strcasecmp(langArg, i18n_language((LangId)i)->code) == 0)
+            if (plat_strcasecmp(langArg, i18n_language((LangId)i)->code) == 0)
             {
                 language = (LangId)i;
                 found = true;
@@ -1421,19 +1331,11 @@ int main(int argc, char **argv)
 
     setup_demo_dialog(app, find_option_value(argc, argv, "--dialog"));
 
-    bool noUpdate = has_flag(argc, argv, "--no-update") || screenshot != NULL;
-    if (!noUpdate)
-    {
-        updater_start(&app->updater, APP_VERSION);
-        app->updateStarted = true;
-    }
-
     log_info("Interface language: %s, theme: %s", i18n_language(app->lang)->code,
              app->dark ? "dark" : "light");
 
     while (!app->shouldClose && !WindowShouldClose())
     {
-        poll_updates(app);
         BeginDrawing();
         draw_frame(app);
         EndDrawing();
@@ -1454,7 +1356,6 @@ int main(int argc, char **argv)
     }
 
     fd_free(&app->fd);
-    updater_join(&app->updater);
     ui_shutdown(&app->ui);
     plat_platform_shutdown();
     CloseWindow();
@@ -1462,3 +1363,10 @@ int main(int argc, char **argv)
     plat_log_close();
     return 0;
 }
+
+#ifndef _WIN32
+int main(int argc, char **argv)
+{
+    return displacebox_main(argc, argv);
+}
+#endif

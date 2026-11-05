@@ -3,7 +3,7 @@
 
 #include "app.h"
 #include "raylib.h"
-#include "raygui.h"
+#include "external/raygui.h"
 
 #define UI_MAX_LINES 320
 #define UI_LINE_LEN  512

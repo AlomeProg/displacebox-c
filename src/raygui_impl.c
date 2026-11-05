@@ -3,4 +3,4 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 #define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
+#include "external/raygui.h"
