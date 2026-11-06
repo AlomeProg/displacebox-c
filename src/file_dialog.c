@@ -47,6 +47,31 @@ static void fd_reload(FileDialog *fd)
     fd->scroll = 0;
     fd->reload = false;
 
+    if (fd->drivesView)
+    {
+        char roots[26][DB_PATH_MAX];
+        int count = plat_list_drives(roots, 26);
+        int capacity = 0;
+        for (int i = 0; i < count; i++)
+        {
+            if (fd->entryCount == capacity)
+            {
+                int nextCapacity = capacity ? capacity * 2 : 16;
+                FdEntry *grown = (FdEntry *)realloc(fd->entries,
+                                                    (size_t)nextCapacity * sizeof(FdEntry));
+                if (!grown) break;
+                fd->entries = grown;
+                capacity = nextCapacity;
+            }
+            FdEntry *entry = &fd->entries[fd->entryCount++];
+            strncpy(entry->name, roots[i], sizeof(entry->name) - 1);
+            entry->name[sizeof(entry->name) - 1] = '\0';
+            entry->isDir = true;
+            entry->size = 0;
+        }
+        return;
+    }
+
     PlatDir *dir = NULL;
     if (!plat_dir_open(&dir, fd->dir))
     {
@@ -90,6 +115,7 @@ static void fd_navigate(FileDialog *fd, const char *path)
 
     snprintf(fd->dir, sizeof(fd->dir), "%s", absolute);
     snprintf(fd->pathInput, sizeof(fd->pathInput), "%s", absolute);
+    fd->drivesView = false;
     fd->selected[0] = '\0';
     fd->active = -1;
     fd->reload = true;
@@ -178,6 +204,14 @@ void fd_free(FileDialog *fd)
     fd->entryCount = 0;
 }
 
+static void fd_entry_path(const FileDialog *fd, int index, char *out, size_t outSize)
+{
+    if (fd->drivesView)
+        snprintf(out, outSize, "%s", fd->entries[index].name);
+    else
+        plat_path_join(out, outSize, fd->dir, fd->entries[index].name);
+}
+
 static void draw_row_icon(Ui *ui, Rectangle bounds, bool isDir, Color color, Color background)
 {
     if (isDir) ui_draw_icon(ui, UI_ICON_FOLDER, bounds, color, background);
@@ -219,9 +253,27 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
 
     if (ui_icon_button(ui, upBtn, UI_ICON_UP, theme->accent))
     {
-        char parent[DB_PATH_MAX];
-        plat_path_dirname(fd->dir, parent, sizeof(parent));
-        fd_navigate(fd, parent);
+        if (!fd->drivesView)
+        {
+            char parent[DB_PATH_MAX];
+            plat_path_dirname(fd->dir, parent, sizeof(parent));
+            if (strcmp(parent, fd->dir) == 0)
+            {
+                char roots[26][DB_PATH_MAX];
+                if (plat_list_drives(roots, 26) > 0)
+                {
+                    fd->drivesView = true;
+                    fd->reload = true;
+                    fd->active = -1;
+                    fd->selected[0] = '\0';
+                    fd->scroll = 0;
+                }
+            }
+            else
+            {
+                fd_navigate(fd, parent);
+            }
+        }
     }
     if (ui_icon_button(ui, homeBtn, UI_ICON_HOME, theme->accent))
     {
@@ -231,9 +283,10 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
 
     Rectangle pathBox = { panel.x + 96.0f, rowY, panel.width - 112.0f, 32.0f };
     GuiSetStyle(TEXTBOX, TEXT_PADDING, 8);
+    bool wasEditingPath = fd->pathEditMode;
     if (GuiTextBox(pathBox, fd->pathInput, (int)sizeof(fd->pathInput), fd->pathEditMode))
         fd->pathEditMode = !fd->pathEditMode;
-    if (fd->pathEditMode && IsKeyPressed(KEY_ENTER))
+    if (wasEditingPath && IsKeyPressed(KEY_ENTER))
     {
         fd_apply_path_input(fd);
         if (!fd->open) return;
@@ -275,7 +328,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
                 fd->active = index;
 
                 char full[DB_PATH_MAX];
-                plat_path_join(full, sizeof(full), fd->dir, fd->entries[index].name);
+                fd_entry_path(fd, index, full, sizeof(full));
                 snprintf(fd->pathInput, sizeof(fd->pathInput), "%s", full);
                 snprintf(fd->selected, sizeof(fd->selected), "%s", full);
 
@@ -356,7 +409,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
         if (fd->active >= 0 && fd->active < fd->entryCount)
         {
             char full[DB_PATH_MAX];
-            plat_path_join(full, sizeof(full), fd->dir, fd->entries[fd->active].name);
+            fd_entry_path(fd, fd->active, full, sizeof(full));
             if (fd->entries[fd->active].isDir) fd_navigate(fd, full);
             else fd_accept(fd, full);
         }
@@ -390,7 +443,7 @@ void fd_draw(FileDialog *fd, Ui *ui, LangId lang)
     if (IsKeyPressed(KEY_ENTER) && !fd->pathEditMode && fd->active >= 0 && fd->active < fd->entryCount)
     {
         char full[DB_PATH_MAX];
-        plat_path_join(full, sizeof(full), fd->dir, fd->entries[fd->active].name);
+        fd_entry_path(fd, fd->active, full, sizeof(full));
         if (fd->entries[fd->active].isDir) fd_navigate(fd, full);
         else fd_accept(fd, full);
     }

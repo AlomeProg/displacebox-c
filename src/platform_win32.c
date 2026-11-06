@@ -143,6 +143,21 @@ bool plat_home_dir(char *out, size_t outSize)
     return ok;
 }
 
+int plat_list_drives(char roots[][DB_PATH_MAX], int maxRoots)
+{
+    DWORD mask = GetLogicalDrives();
+    int count = 0;
+    for (int i = 0; i < 26 && count < maxRoots; i++)
+    {
+        if (mask & (1u << i))
+        {
+            snprintf(roots[count], DB_PATH_MAX, "%c:\\", 'A' + i);
+            count++;
+        }
+    }
+    return count;
+}
+
 bool plat_path_absolute(const char *path, char *out, size_t outSize)
 {
     wchar_t *wide = utf8_to_wide(path);

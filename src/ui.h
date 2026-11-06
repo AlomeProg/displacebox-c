@@ -8,19 +8,6 @@
 #define UI_MAX_LINES 320
 #define UI_LINE_LEN  512
 
-typedef struct {
-    Font regular;
-    Font bold;
-    Theme theme;
-    bool dark;
-    Texture2D logoTex[2];   /* 0 = dark-theme logo, 1 = light-theme logo */
-    Texture2D iconTex[2];
-    Texture2D socialTex[4]; /* github, discord, telegram, youtube */
-    Texture2D windowIcon;
-    bool inputEnabled;
-    bool ready;
-} Ui;
-
 typedef enum {
     UI_ICON_HELP,
     UI_ICON_GLOBE,
@@ -37,8 +24,29 @@ typedef enum {
     UI_ICON_FILE,
     UI_ICON_UP,
     UI_ICON_HOME,
-    UI_ICON_OPEN
+    UI_ICON_OPEN,
+    UI_ICON_COUNT
 } IconKind;
+
+typedef struct {
+    Font regular;
+    Font bold;
+    Font guiFont;       /* non-SDF font for raygui text input */
+    Shader sdfShader;
+    bool sdfEnabled;
+    Theme theme;
+    bool dark;
+    Texture2D logoTex[2];   /* 0 = dark-theme logo, 1 = light-theme logo */
+    Texture2D iconTex[2];
+    Texture2D socialTex[4]; /* github, discord, telegram, youtube */
+    Texture2D radioTex[2];  /* 0 = empty, 1 = selected */
+    Texture2D glyphTex[UI_ICON_COUNT];
+    Texture2D windowIcon;
+    bool inputEnabled;
+    bool ready;
+} Ui;
+
+
 
 bool ui_init(Ui *ui, bool dark);
 void ui_shutdown(Ui *ui);

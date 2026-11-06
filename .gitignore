@@ -11,3 +11,4 @@
 /tests/*.d
 /build-win/
 /dist/
+compile_flags.txt

@@ -541,8 +541,8 @@ static bool social_button(App *app, int index, Rectangle bounds, const char *too
         ui_panel(bounds, 0.35f, background, BLANK, 0);
     }
     ui_draw_social(&app->ui, index,
-                   (Rectangle){ bounds.x + 6.0f, bounds.y + 6.0f, bounds.width - 12.0f,
-                                bounds.height - 12.0f },
+                   (Rectangle){ bounds.x + 3.0f, bounds.y + 3.0f, bounds.width - 6.0f,
+                                bounds.height - 6.0f },
                    app->ui.theme.accent);
 
     if (hovered)
@@ -566,7 +566,7 @@ static bool social_button(App *app, int index, Rectangle bounds, const char *too
 static void draw_footer(App *app, bool enabled)
 {
     Theme *theme = &app->ui.theme;
-    float toolbarY = 452.0f;
+    float toolbarY = 500.0f;
     float toolbarX = 195.0f;
 
     topbar_tooltip_button(app, 10, (Rectangle){ toolbarX, toolbarY, 40.0f, 40.0f }, UI_ICON_HELP,
@@ -609,7 +609,7 @@ static void draw_footer(App *app, bool enabled)
                                                                        : ".raw/.png --> .bin");
     }
 
-    float socialY = 506.0f;
+    float socialY = 558.0f;
     float socialX = 205.0f;
     if (social_button(app, 0, (Rectangle){ socialX, socialY, 32.0f, 32.0f }, tr(STR_GITHUB)) &&
         enabled)
@@ -820,7 +820,7 @@ static void clamp_dialog_scroll(App *app, Rectangle content, float contentHeight
 
 static void draw_dialog_scrollbar(Rectangle content, float contentHeight, float scroll)
 {
-    if (contentHeight <= content.height) return;
+    if (contentHeight <= content.height + 1.0f) return;
     float trackH = content.height;
     float thumbH = fmaxf(24.0f, trackH * content.height / contentHeight);
     float maxScroll = contentHeight - content.height;
@@ -960,13 +960,17 @@ static void draw_message_dialog(App *app, DialogKind kind)
 static void draw_help_dialog(App *app)
 {
     Theme *theme = &app->ui.theme;
-    float width = 500.0f, height = 540.0f;
+    float width = 500.0f;
+    int lineCount = ui_wrap(&app->ui, app->dlgMessage, 14.0f, width - 40.0f, g_dialogLines,
+                            UI_MAX_LINES);
+    float contentHeight = ui_lines_height(lineCount, 14.0f);
+    float height = 64.0f + contentHeight + 64.0f;
+    if (height < 260.0f) height = 260.0f;
+    if (height > 620.0f) height = 620.0f;
+
     Rectangle panel = begin_dialog(app, width, height, theme->panel, theme->panelBorder);
     draw_dialog_header(app, panel, UI_ICON_INFO, theme->text, theme->text, theme->panel);
 
-    int lineCount = ui_wrap(&app->ui, app->dlgMessage, 13.0f, width - 40.0f, g_dialogLines,
-                            UI_MAX_LINES);
-    float contentHeight = ui_lines_height(lineCount, 13.0f);
     Rectangle content = { panel.x + 20.0f, panel.y + 64.0f, panel.width - 40.0f,
                           panel.height - 128.0f };
 
@@ -976,7 +980,7 @@ static void draw_help_dialog(App *app)
         if (wheel != 0.0f) app->dlgScroll -= wheel * 40.0f;
     }
     clamp_dialog_scroll(app, content, contentHeight);
-    ui_draw_lines(&app->ui, g_dialogLines, lineCount, content, 13.0f, theme->text, app->dlgScroll);
+    ui_draw_lines(&app->ui, g_dialogLines, lineCount, content, 14.0f, theme->text, app->dlgScroll);
     draw_dialog_scrollbar(content, contentHeight, app->dlgScroll);
 
     float buttonY = panel.y + panel.height - 50.0f;
@@ -996,17 +1000,21 @@ static void draw_help_dialog(App *app)
 static void draw_meta_dialog(App *app)
 {
     Theme *theme = &app->ui.theme;
-    float width = 480.0f, height = 380.0f;
+    float width = 480.0f;
+    int lineCount = ui_wrap(&app->ui, app->dlgMessage, 14.0f, width - 40.0f, g_dialogLines,
+                            UI_MAX_LINES);
+    float contentHeight = ui_lines_height(lineCount, 14.0f);
+    float height = 64.0f + contentHeight + 64.0f;
+    if (height < 220.0f) height = 220.0f;
+    if (height > 500.0f) height = 500.0f;
+
     Rectangle panel = begin_dialog(app, width, height, theme->panel, theme->panelBorder);
     draw_dialog_header(app, panel, UI_ICON_INFO, theme->text, theme->text, theme->panel);
 
-    int lineCount = ui_wrap(&app->ui, app->dlgMessage, 13.0f, width - 40.0f, g_dialogLines,
-                            UI_MAX_LINES);
-    float contentHeight = ui_lines_height(lineCount, 13.0f);
     Rectangle content = { panel.x + 20.0f, panel.y + 64.0f, panel.width - 40.0f,
                           panel.height - 128.0f };
     clamp_dialog_scroll(app, content, contentHeight);
-    ui_draw_lines(&app->ui, g_dialogLines, lineCount, content, 13.0f, theme->text, app->dlgScroll);
+    ui_draw_lines(&app->ui, g_dialogLines, lineCount, content, 14.0f, theme->text, app->dlgScroll);
     draw_dialog_scrollbar(content, contentHeight, app->dlgScroll);
 
     float buttonY = panel.y + panel.height - 50.0f;

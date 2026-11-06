@@ -32,6 +32,7 @@ typedef struct {
     double lastClickTime;
     int lastClickIndex;
     bool pathEditMode;
+    bool drivesView;
     bool reload;
     bool accepted;
     bool cancelled;

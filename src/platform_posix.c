@@ -103,6 +103,13 @@ bool plat_home_dir(char *out, size_t outSize)
     return snprintf(out, outSize, "%s", home) < (int)outSize;
 }
 
+int plat_list_drives(char roots[][DB_PATH_MAX], int maxRoots)
+{
+    (void)roots;
+    (void)maxRoots;
+    return 0;
+}
+
 bool plat_path_absolute(const char *path, char *out, size_t outSize)
 {
     if (!path || !path[0]) return false;

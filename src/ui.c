@@ -7,6 +7,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+static Texture2D render_icon_texture(Ui *ui, IconKind icon);
+static Texture2D render_radio_texture(bool selected);
+
+#define SDF_FONT_BASE_SIZE 24
+
+/* Same shader as raylib's examples/text/text_font_sdf.c (glsl330). */
+static const char *SDF_FRAGMENT_SHADER =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 colDiffuse;\n"
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    float distanceFromOutline = texture(texture0, fragTexCoord).a - 0.5;\n"
+    "    float distanceChangePerFragment = length(vec2(dFdx(distanceFromOutline), dFdy(distanceFromOutline)));\n"
+    "    float alpha = smoothstep(-distanceChangePerFragment, distanceChangePerFragment, distanceFromOutline);\n"
+    "    finalColor = vec4(fragColor.rgb, fragColor.a*alpha);\n"
+    "}\n";
+
 /* ------------------------------------------------------------------------- */
 /* Themes                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -158,7 +179,7 @@ static unsigned char *read_asset_file(const char *fileName, int *outSize,
     return data;
 }
 
-static Font load_font_file(const char *fileName, int *codepoints, int count)
+static Font load_font_regular(const char *fileName, int *codepoints, int count)
 {
     char path[DB_PATH_MAX];
     int dataSize = 0;
@@ -171,7 +192,7 @@ static Font load_font_file(const char *fileName, int *codepoints, int count)
 
     /* Load from memory: raylib's file loaders use narrow fopen() on Windows,
      * which cannot open assets under a Unicode path (e.g. C:\Users\Иван). */
-    Font font = LoadFontFromMemory(".ttf", data, dataSize, 48, codepoints, count);
+    Font font = LoadFontFromMemory(".ttf", data, dataSize, 32, codepoints, count);
     free(data);
 
     if (font.texture.id == 0)
@@ -179,6 +200,55 @@ static Font load_font_file(const char *fileName, int *codepoints, int count)
         log_error("Unable to load font: %s", path);
         return GetFontDefault();
     }
+    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+    return font;
+}
+
+static Font load_font_sdf(const char *fileName, int *codepoints, int count)
+{
+    Font font = { 0 };
+    char path[DB_PATH_MAX];
+    int dataSize = 0;
+    unsigned char *data = read_asset_file(fileName, &dataSize, path, sizeof(path));
+    if (!data) return font;
+
+    int glyphCount = 0;
+    GlyphInfo *glyphs = LoadFontData(data, dataSize, SDF_FONT_BASE_SIZE, codepoints, count,
+                                     FONT_SDF, &glyphCount);
+    free(data);
+
+    if (!glyphs || glyphCount <= 0)
+    {
+        if (glyphs) UnloadFontData(glyphs, glyphCount);
+        log_error("Unable to generate SDF font data: %s", path);
+        return font;
+    }
+
+    font.baseSize = SDF_FONT_BASE_SIZE;
+    font.glyphCount = glyphCount;
+    font.glyphs = glyphs;
+
+    Image atlas = GenImageFontAtlas(glyphs, &font.recs, glyphCount, SDF_FONT_BASE_SIZE, 0, 1);
+    if (!atlas.data)
+    {
+        UnloadFontData(glyphs, glyphCount);
+        log_error("Unable to generate SDF font atlas: %s", path);
+        memset(&font, 0, sizeof(font));
+        return font;
+    }
+
+    font.texture = LoadTextureFromImage(atlas);
+    UnloadImage(atlas);
+
+    if (font.texture.id == 0)
+    {
+        UnloadFontData(glyphs, glyphCount);
+        free(font.recs);
+        log_error("Unable to upload SDF font atlas: %s", path);
+        memset(&font, 0, sizeof(font));
+        return font;
+    }
+
     SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
     return font;
 }
@@ -219,8 +289,28 @@ bool ui_init(Ui *ui, bool dark)
     int codepointCount = 0;
     int *codepoints = build_codepoints(&codepointCount);
 
-    ui->regular = load_font_file("DejaVuSans.ttf", codepoints, codepointCount);
-    ui->bold = load_font_file("DejaVuSans-Bold.ttf", codepoints, codepointCount);
+    /* A regular font is still needed for raygui (text input), because the
+     * SDF shader must not be active while raygui draws its own shapes. */
+    ui->guiFont = load_font_regular("DejaVuSans.ttf", codepoints, codepointCount);
+
+    ui->sdfShader = LoadShaderFromMemory(NULL, SDF_FRAGMENT_SHADER);
+    if (ui->sdfShader.id != 0)
+    {
+        ui->regular = load_font_sdf("DejaVuSans.ttf", codepoints, codepointCount);
+        ui->bold = load_font_sdf("DejaVuSans-Bold.ttf", codepoints, codepointCount);
+        ui->sdfEnabled = (ui->regular.texture.id != 0 && ui->bold.texture.id != 0);
+    }
+
+    if (!ui->sdfEnabled)
+    {
+        if (ui->regular.texture.id) UnloadFont(ui->regular);
+        if (ui->bold.texture.id) UnloadFont(ui->bold);
+        memset(&ui->regular, 0, sizeof(ui->regular));
+        memset(&ui->bold, 0, sizeof(ui->bold));
+
+        ui->regular = load_font_regular("DejaVuSans.ttf", codepoints, codepointCount);
+        ui->bold = load_font_regular("DejaVuSans-Bold.ttf", codepoints, codepointCount);
+    }
 
     ui->logoTex[0] = load_texture_asset("logo.png");
     ui->logoTex[1] = load_texture_asset("logo_white.png");
@@ -239,6 +329,12 @@ bool ui_init(Ui *ui, bool dark)
         UnloadImage(iconImage);
     }
 
+    ui->radioTex[0] = render_radio_texture(false);
+    ui->radioTex[1] = render_radio_texture(true);
+
+    for (int i = 0; i < UI_ICON_COUNT; i++)
+        ui->glyphTex[i] = render_icon_texture(ui, (IconKind)i);
+
     ui_apply_raygui(ui);
     ui->inputEnabled = true;
     ui->ready = true;
@@ -254,6 +350,13 @@ void ui_shutdown(Ui *ui)
     }
     for (int i = 0; i < 4; i++)
         if (ui->socialTex[i].id) UnloadTexture(ui->socialTex[i]);
+    if (ui->guiFont.texture.id && ui->guiFont.texture.id != GetFontDefault().texture.id)
+        UnloadFont(ui->guiFont);
+    if (ui->sdfShader.id) UnloadShader(ui->sdfShader);
+    for (int i = 0; i < 2; i++)
+        if (ui->radioTex[i].id) UnloadTexture(ui->radioTex[i]);
+    for (int i = 0; i < UI_ICON_COUNT; i++)
+        if (ui->glyphTex[i].id) UnloadTexture(ui->glyphTex[i]);
     if (ui->windowIcon.id) UnloadTexture(ui->windowIcon);
     if (ui->regular.texture.id && ui->regular.texture.id != GetFontDefault().texture.id)
         UnloadFont(ui->regular);
@@ -281,7 +384,7 @@ static void raygui_color(int control, int property, Color color)
 void ui_apply_raygui(Ui *ui)
 {
     Theme *t = &ui->theme;
-    GuiSetFont(ui->regular.texture.id ? ui->regular : GetFontDefault());
+    GuiSetFont(ui->guiFont.texture.id ? ui->guiFont : GetFontDefault());
 
     GuiSetStyle(DEFAULT, TEXT_SIZE, 14);
     GuiSetStyle(DEFAULT, TEXT_SPACING, 0);
@@ -356,12 +459,30 @@ float ui_line_height(float size)
     return size * 1.45f;
 }
 
+static bool text_uses_sdf(Ui *ui, Font font)
+{
+    return ui->sdfEnabled && font.texture.id != 0 &&
+           font.texture.id != GetFontDefault().texture.id;
+}
+
+static void text_shader_begin(Ui *ui, Font font)
+{
+    if (text_uses_sdf(ui, font)) BeginShaderMode(ui->sdfShader);
+}
+
+static void text_shader_end(Ui *ui, Font font)
+{
+    if (text_uses_sdf(ui, font)) EndShaderMode();
+}
+
 void ui_draw_text(Ui *ui, const char *text, float x, float y, float size, Color color, bool bold)
 {
     if (!text || !text[0]) return;
     Font font = bold ? ui->bold : ui->regular;
     if (!font.texture.id) font = GetFontDefault();
+    text_shader_begin(ui, font);
     DrawTextEx(font, text, (Vector2){ x, y }, size, size * 0.02f, color);
+    text_shader_end(ui, font);
 }
 
 void ui_draw_text_center(Ui *ui, const char *text, Rectangle bounds, float size, Color color, bool bold)
@@ -372,7 +493,9 @@ void ui_draw_text_center(Ui *ui, const char *text, Rectangle bounds, float size,
     Vector2 measured = MeasureTextEx(font, text, size, size * 0.02f);
     float x = bounds.x + (bounds.width - measured.x) * 0.5f;
     float y = bounds.y + (bounds.height - measured.y) * 0.5f;
+    text_shader_begin(ui, font);
     DrawTextEx(font, text, (Vector2){ x, y }, size, size * 0.02f, color);
+    text_shader_end(ui, font);
 }
 
 void ui_draw_text_right(Ui *ui, const char *text, Rectangle bounds, float size, Color color, bool bold)
@@ -383,7 +506,9 @@ void ui_draw_text_right(Ui *ui, const char *text, Rectangle bounds, float size, 
     Vector2 measured = MeasureTextEx(font, text, size, size * 0.02f);
     float x = bounds.x + bounds.width - measured.x;
     float y = bounds.y + (bounds.height - measured.y) * 0.5f;
+    text_shader_begin(ui, font);
     DrawTextEx(font, text, (Vector2){ x, y }, size, size * 0.02f, color);
+    text_shader_end(ui, font);
 }
 
 void ui_scissor(Rectangle r)
@@ -410,7 +535,9 @@ void ui_draw_text_clip(Ui *ui, const char *text, Rectangle bounds, float size, C
     if (!font.texture.id) font = GetFontDefault();
     Vector2 measured = MeasureTextEx(font, text, size, size * 0.02f);
     float y = bounds.y + (bounds.height - measured.y) * 0.5f;
+    text_shader_begin(ui, font);
     DrawTextEx(font, text, (Vector2){ bounds.x, y }, size, size * 0.02f, color);
+    text_shader_end(ui, font);
     EndScissorMode();
 }
 
@@ -436,10 +563,12 @@ void ui_draw_text_clip_left(Ui *ui, const char *text, Rectangle bounds, float si
     float y = bounds.y + (bounds.height - measured.y) * 0.5f;
 
     begin_scissor(bounds);
+    text_shader_begin(ui, font);
     if (start != text)
         DrawTextEx(font, "…", (Vector2){ bounds.x, y }, size, size * 0.02f, color);
     DrawTextEx(font, start, (Vector2){ bounds.x + (start != text ? ellipsisWidth + 2.0f : 0.0f), y },
                size, size * 0.02f, color);
+    text_shader_end(ui, font);
     EndScissorMode();
 }
 
@@ -601,6 +730,12 @@ static Color blend_over(Color background, Color foreground)
     return ColorAlphaBlend(background, foreground, WHITE);
 }
 
+/* A ring drawn with a small angular overlap to hide the fan seam. */
+static void draw_ring(Vector2 center, float inner, float outer, Color color)
+{
+    DrawRing(center, inner, outer, -1.0f, 361.0f, 64, color);
+}
+
 bool ui_button(Ui *ui, Rectangle bounds, const char *label, bool enabled)
 {
     Vector2 mouse = GetMousePosition();
@@ -630,9 +765,9 @@ bool ui_icon_button(Ui *ui, Rectangle bounds, IconKind icon, Color iconColor)
     if (hovered) ui_panel(bounds, 0.35f, background, BLANK, 0);
 
     Rectangle iconBounds = {
-        bounds.x + (bounds.width - 20.0f) * 0.5f,
-        bounds.y + (bounds.height - 20.0f) * 0.5f,
-        20.0f, 20.0f
+        bounds.x + (bounds.width - 22.0f) * 0.5f,
+        bounds.y + (bounds.height - 22.0f) * 0.5f,
+        22.0f, 22.0f
     };
     ui_draw_icon(ui, icon, iconBounds, iconColor, background);
     return clicked;
@@ -646,9 +781,19 @@ bool ui_radio(Ui *ui, Rectangle bounds, const char *label, bool selected)
 
     Vector2 center = { bounds.x + 9.0f, bounds.y + bounds.height * 0.5f };
     Color ringColor = selected ? ui->theme.accent : (hovered ? ui->theme.text : ui->theme.textDim);
-    DrawCircleV(center, 8.0f, ringColor);
-    DrawCircleV(center, 6.3f, ui->theme.bg);
-    if (selected) DrawCircleV(center, 4.2f, ui->theme.accent);
+
+    Texture2D radio = ui->radioTex[selected ? 1 : 0];
+    if (radio.id != 0)
+    {
+        Rectangle source = { 0.0f, 0.0f, (float)radio.width, (float)radio.height };
+        Rectangle destination = { center.x - 9.0f, center.y - 9.0f, 18.0f, 18.0f };
+        DrawTexturePro(radio, source, destination, (Vector2){ 0.0f, 0.0f }, 0.0f, ringColor);
+    }
+    else
+    {
+        draw_ring(center, 6.4f, 8.0f, ringColor);
+        if (selected) DrawCircleV(center, 4.2f, ringColor);
+    }
 
     ui_draw_text(ui, label, bounds.x + 24.0f,
                  bounds.y + (bounds.height - 15.0f) * 0.5f - 1.0f,
@@ -720,7 +865,71 @@ void ui_draw_app_icon(Ui *ui, Rectangle bounds)
 /* Icons                                                                     */
 /* ------------------------------------------------------------------------- */
 
-void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color background)
+static float angle_norm(float angle)
+{
+    while (angle < 0.0f) angle += 2.0f * PI;
+    while (angle >= 2.0f * PI) angle -= 2.0f * PI;
+    return angle;
+}
+
+static void draw_crescent(Vector2 c1, float r1, Vector2 c2, float r2, Color color)
+{
+    float dx = c2.x - c1.x;
+    float dy = c2.y - c1.y;
+    float d = sqrtf(dx * dx + dy * dy);
+
+    if (d < 1e-4f || d >= r1 + r2 || d <= fabsf(r1 - r2))
+    {
+        DrawCircleV(c1, r1, color);
+        return;
+    }
+
+    float a = (r1 * r1 - r2 * r2 + d * d) / (2.0f * d);
+    float h = sqrtf(fmaxf(0.0f, r1 * r1 - a * a));
+    float ux = dx / d;
+    float uy = dy / d;
+
+    Vector2 base = { c1.x + ux * a, c1.y + uy * a };
+    Vector2 p1 = { base.x - uy * h, base.y + ux * h };
+    Vector2 p2 = { base.x + uy * h, base.y - ux * h };
+
+    float a1 = atan2f(p1.y - c1.y, p1.x - c1.x);
+    float a2 = atan2f(p2.y - c1.y, p2.x - c1.x);
+    float outerDelta = angle_norm(a2 - a1);
+    float outerMid = a1 + outerDelta * 0.5f;
+    Vector2 outerMidPoint = { c1.x + cosf(outerMid) * r1, c1.y + sinf(outerMid) * r1 };
+    bool outerCcw = hypotf(outerMidPoint.x - c2.x, outerMidPoint.y - c2.y) > r2;
+    float outerStep = outerCcw ? outerDelta : -angle_norm(a1 - a2);
+
+    float b1 = atan2f(p1.y - c2.y, p1.x - c2.x);
+    float b2 = atan2f(p2.y - c2.y, p2.x - c2.x);
+    float innerDelta = angle_norm(b2 - b1);
+    float innerMid = b1 + innerDelta * 0.5f;
+    Vector2 innerMidPoint = { c2.x + cosf(innerMid) * r2, c2.y + sinf(innerMid) * r2 };
+    bool innerCcw = hypotf(innerMidPoint.x - c1.x, innerMidPoint.y - c1.y) < r1;
+    float innerStep = innerCcw ? innerDelta : -angle_norm(b1 - b2);
+
+    const int segments = 32;
+    Vector2 outer[33];
+    Vector2 inner[33];
+
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = (float)i / (float)segments;
+        float ao = a1 + outerStep * t;
+        float ai = b1 + innerStep * t;
+        outer[i] = (Vector2){ c1.x + cosf(ao) * r1, c1.y + sinf(ao) * r1 };
+        inner[i] = (Vector2){ c2.x + cosf(ai) * r2, c2.y + sinf(ai) * r2 };
+    }
+
+    for (int i = 0; i < segments; i++)
+    {
+        DrawTriangle(outer[i], inner[i + 1], outer[i + 1], color);
+        DrawTriangle(outer[i], inner[i], inner[i + 1], color);
+    }
+}
+
+static void draw_icon_shape(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color background)
 {
     float unit = fminf(bounds.width, bounds.height) / 24.0f;
     float cx = bounds.x + bounds.width * 0.5f;
@@ -733,29 +942,30 @@ void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color ba
     switch (icon)
     {
         case UI_ICON_HELP:
-            DrawCircleV((Vector2){ cx, cy }, 9.3f * unit, color);
-            DrawCircleV((Vector2){ cx, cy }, 8.0f * unit, background);
-            ui_draw_text_center(ui, "?",
-                                (Rectangle){ cx - 8.0f * unit, cy - 9.0f * unit,
-                                             16.0f * unit, 18.0f * unit },
-                                13.5f * unit, color, true);
+            draw_ring((Vector2){ cx, cy }, 8.0f * unit, 9.3f * unit, color);
+            DrawRing((Vector2){ cx, cy - 2.0f * unit }, 2.2f * unit, 3.7f * unit,
+                     150.0f, 390.0f, 32, color);
+            {
+                float angle = 30.0f * (PI / 180.0f);
+                Vector2 end = { cx + cosf(angle) * 2.95f * unit,
+                                cy - 2.0f * unit + sinf(angle) * 2.95f * unit };
+                DrawLineEx(end, (Vector2){ cx, cy + 2.0f * unit }, thickness, color);
+                DrawCircleV((Vector2){ cx, cy + 4.6f * unit }, 1.15f * unit, color);
+            }
             break;
 
         case UI_ICON_GLOBE:
-            DrawCircleV((Vector2){ cx, cy }, 9.3f * unit, color);
-            DrawCircleV((Vector2){ cx, cy }, 8.0f * unit, background);
+            draw_ring((Vector2){ cx, cy }, 8.0f * unit, 9.3f * unit, color);
             DrawEllipseLinesEx((Vector2){ cx, cy }, 9.1f * unit, 4.0f * unit, thickness, color);
             DrawEllipseLinesEx((Vector2){ cx, cy }, 4.0f * unit, 9.1f * unit, thickness, color);
             LINE(-8.5f, 0.0f, 8.5f, 0.0f);
             break;
 
         case UI_ICON_MOON:
-        {
-            DrawCircleV((Vector2){ cx, cy }, 8.3f * unit, color);
-            Vector2 cut = { cx + 4.6f * unit, cy - 3.6f * unit };
-            DrawCircleV(cut, 7.6f * unit, background);
+            draw_crescent((Vector2){ cx, cy }, 8.3f * unit,
+                          (Vector2){ cx + 4.6f * unit, cy - 3.6f * unit },
+                          7.6f * unit, color);
             break;
-        }
 
         case UI_ICON_SUN:
             DrawCircleV((Vector2){ cx, cy }, 4.6f * unit, color);
@@ -808,15 +1018,13 @@ void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color ba
         }
 
         case UI_ICON_ERROR:
-            DrawCircleV((Vector2){ cx, cy }, 9.3f * unit, color);
-            DrawCircleV((Vector2){ cx, cy }, 8.0f * unit, background);
+            draw_ring((Vector2){ cx, cy }, 8.0f * unit, 9.3f * unit, color);
             DrawLineEx((Vector2){ cx, cy - 4.5f * unit }, (Vector2){ cx, cy + 1.8f * unit }, thickness, color);
             DrawCircleV((Vector2){ cx, cy + 4.8f * unit }, 1.3f * unit, color);
             break;
 
         case UI_ICON_INFO:
-            DrawCircleV((Vector2){ cx, cy }, 9.3f * unit, color);
-            DrawCircleV((Vector2){ cx, cy }, 8.0f * unit, background);
+            draw_ring((Vector2){ cx, cy }, 8.0f * unit, 9.3f * unit, color);
             DrawCircleV((Vector2){ cx, cy - 4.6f * unit }, 1.3f * unit, color);
             DrawLineEx((Vector2){ cx, cy - 1.5f * unit }, (Vector2){ cx, cy + 5.0f * unit }, thickness, color);
             break;
@@ -832,12 +1040,16 @@ void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color ba
 
         case UI_ICON_FILE:
         {
-            Rectangle page = { cx - 5.5f * unit, cy - 8.0f * unit, 11.0f * unit, 16.0f * unit };
-            DrawRectangleRounded(page, 0.12f, 5, color);
-            Vector2 f1 = { cx + 1.5f * unit, cy - 8.0f * unit };
-            Vector2 f2 = { cx + 5.5f * unit, cy - 4.0f * unit };
-            Vector2 f3 = { cx + 1.5f * unit, cy - 4.0f * unit };
-            DrawTriangle(f1, f2, f3, background);
+            float x = cx - 5.5f * unit;
+            float y = cy - 8.0f * unit;
+            float w = 11.0f * unit;
+            float h = 16.0f * unit;
+            float fold = 4.0f * unit;
+            Vector2 page[5] = {
+                { x, y }, { x + w - fold, y }, { x + w, y + fold }, { x + w, y + h }, { x, y + h }
+            };
+            for (int i = 1; i < 4; i++)
+                DrawTriangle(page[0], page[i + 1], page[i], color);
             break;
         }
 
@@ -869,4 +1081,69 @@ void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color ba
 
 #undef LINE
 #undef V
+}
+
+static Texture2D render_icon_texture(Ui *ui, IconKind icon)
+{
+    RenderTexture2D target = LoadRenderTexture(128, 128);
+    if (target.id == 0) return (Texture2D){ 0 };
+
+    BeginTextureMode(target);
+    ClearBackground(BLANK);
+    draw_icon_shape(ui, icon, (Rectangle){ 0.0f, 0.0f, 128.0f, 128.0f }, WHITE, BLANK);
+    EndTextureMode();
+
+    Texture2D texture = { 0 };
+    Image image = LoadImageFromTexture(target.texture);
+    if (image.data)
+    {
+        ImageFlipVertical(&image);
+        texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+    }
+    UnloadRenderTexture(target);
+
+    if (texture.id != 0) SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
+    return texture;
+}
+
+static Texture2D render_radio_texture(bool selected)
+{
+    RenderTexture2D target = LoadRenderTexture(128, 128);
+    if (target.id == 0) return (Texture2D){ 0 };
+
+    const float scale = 128.0f / 18.0f;
+    Vector2 center = { 64.0f, 64.0f };
+
+    BeginTextureMode(target);
+    ClearBackground(BLANK);
+    DrawRing(center, 6.4f * scale, 8.0f * scale, -1.0f, 361.0f, 64, WHITE);
+    if (selected) DrawCircleV(center, 4.2f * scale, WHITE);
+    EndTextureMode();
+
+    Texture2D texture = { 0 };
+    Image image = LoadImageFromTexture(target.texture);
+    if (image.data)
+    {
+        ImageFlipVertical(&image);
+        texture = LoadTextureFromImage(image);
+        UnloadImage(image);
+    }
+    UnloadRenderTexture(target);
+
+    if (texture.id != 0) SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
+    return texture;
+}
+
+void ui_draw_icon(Ui *ui, IconKind icon, Rectangle bounds, Color color, Color background)
+{
+    if (icon >= 0 && icon < UI_ICON_COUNT && ui->glyphTex[icon].id != 0)
+    {
+        Texture2D texture = ui->glyphTex[icon];
+        Rectangle source = { 0.0f, 0.0f, (float)texture.width, (float)texture.height };
+        DrawTexturePro(texture, source, bounds, (Vector2){ 0.0f, 0.0f }, 0.0f, color);
+        return;
+    }
+
+    draw_icon_shape(ui, icon, bounds, color, background);
 }

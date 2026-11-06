@@ -28,6 +28,7 @@ bool plat_is_sep(char c);
 
 const char *plat_exe_dir(void);
 bool plat_home_dir(char *out, size_t outSize);
+int plat_list_drives(char roots[][DB_PATH_MAX], int maxRoots);
 bool plat_asset_path(const char *name, char *out, size_t outSize);
 bool plat_path_join(char *out, size_t outSize, const char *a, const char *b);
 void plat_path_dirname(const char *path, char *out, size_t outSize);
